@@ -26,3 +26,19 @@ jobs:
       - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
       - name: Criterion smoke (sanity, not a gate)
         run: cargo bench -- --test
+
+  # Fuzz smoke: 60s per registry/exposition target. Full runs are
+  # local/nightly; this gate catches regressions on adversarial
+  # name/label/value inputs early.
+  fuzz-smoke:
+    name: fuzz smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-fuzz --locked
+      - name: registry smoke (60s)
+        run: cargo fuzz run fuzz_registry -- -max_total_time=60 -max_len=4096 -detect_leaks=0
+      - name: render numbers smoke (60s)
+        run: cargo fuzz run fuzz_render_numbers -- -max_total_time=60 -max_len=4096 -detect_leaks=0
