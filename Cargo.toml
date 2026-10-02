@@ -41,3 +41,6 @@ lto = "fat"
 codegen-units = 1
 strip = true
 panic = "abort"
+
+[package.metadata.layers]
+tier = "L1"
