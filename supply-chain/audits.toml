@@ -1,4 +1,7 @@
 
 # cargo-vet audits file
 
-[audits]
+[[audits.metrics-kit]]
+criteria = "safe-to-deploy"
+version = "0.2.0"
+notes = "WyattAu estate first-party L1 crate (lock-free Prometheus/OpenMetrics exposition); reviewed as the original in-tree implementation."

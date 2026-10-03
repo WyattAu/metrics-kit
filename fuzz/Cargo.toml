@@ -11,7 +11,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-metrics-kit = { path = ".." }
+metrics-kit = { path = "..", features = ["openmetrics", "exemplars"] }
 
 [[bin]]
 name = "fuzz_registry"

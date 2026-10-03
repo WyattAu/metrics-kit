@@ -1,17 +1,43 @@
 //! The metric registry: registration, validation, and exposition rendering.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::counter::Counter;
+use crate::encoder::Format;
 use crate::error::MetricsError;
+#[cfg(feature = "openmetrics")]
+use crate::exposition::render_family_om;
+use crate::exposition::render_family_prom;
+use crate::gauge::Gauge;
 use crate::histogram::Histogram;
-use crate::{exposition::render_series, gauge::Gauge};
 
 pub use crate::histogram::DEFAULT_METRIC_BUCKETS;
 
+/// Maximum metric-name length accepted under
+/// [`NamePolicy::Utf8`](NamePolicy::Utf8), as a sanity cap.
+const MAX_UTF8_NAME_BYTES: usize = 255;
+
 /// Default cardinality budget: 1,024 series per registry.
 pub const DEFAULT_MAX_SERIES: usize = 1024;
+
+/// Metric-name validation policy.
+///
+/// `Legacy` (the default) accepts only Prometheus identifiers
+/// (`[a-zA-Z_:][a-zA-Z0-9_:]*`). `Utf8` additionally accepts any non-empty
+/// UTF-8 name without control characters (≤255 bytes) for OpenMetrics
+/// UTF-8 metric names; those series render quoted in OpenMetrics mode and
+/// are omitted from legacy Prometheus-text renders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum NamePolicy {
+    /// Legacy Prometheus identifier names only (default).
+    #[default]
+    Legacy,
+    /// Additionally accept OpenMetrics UTF-8 metric names.
+    Utf8,
+}
 
 pub(crate) enum MetricKind {
     Counter(Counter),
@@ -23,6 +49,10 @@ pub(crate) struct Series {
     pub(crate) name: String,
     pub(crate) labels: Vec<(String, String)>,
     pub(crate) kind: MetricKind,
+    /// Registration time in seconds since the Unix epoch, rendered as the
+    /// OpenMetrics `_created` series (counters and histograms).
+    #[cfg_attr(not(feature = "openmetrics"), allow(dead_code))]
+    pub(crate) created: f64,
 }
 
 pub(crate) struct Family {
@@ -34,18 +64,20 @@ pub(crate) struct Family {
 ///
 /// Registration takes the registry lock — intended at startup and
 /// reconfiguration only; the hot path touches only the returned metric
-/// handles and never locks. [`Registry::render`] is called on the scrape
-/// path. Iteration order is deterministic (`BTreeMap` by family name) so
-/// scrapes diff cleanly.
+/// handles and never locks. [`Registry::render`] and [`Registry::render_as`]
+/// are called on the scrape path. Iteration order is deterministic
+/// (`BTreeMap` by family name) so scrapes diff cleanly.
 #[derive(Default)]
 pub struct Registry {
     inner: RwLock<RegistryState>,
+    name_policy: NamePolicy,
 }
 
 impl std::fmt::Debug for Registry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Registry")
             .field("series_count", &self.series_count())
+            .field("name_policy", &self.name_policy)
             .finish_non_exhaustive()
     }
 }
@@ -75,7 +107,42 @@ impl Registry {
                 series_count: 0,
                 max_series,
             }),
+            name_policy: NamePolicy::Legacy,
         }
+    }
+
+    /// Sets the metric-name validation policy (builder style).
+    ///
+    /// ```
+    /// use metrics_kit::{NamePolicy, Registry};
+    ///
+    /// let registry = Registry::new().with_name_policy(NamePolicy::Utf8);
+    /// assert!(registry
+    ///     .counter("service.rust.http.requests", "Dotted name.", &[])
+    ///     .is_ok());
+    /// ```
+    pub fn with_name_policy(mut self, name_policy: NamePolicy) -> Self {
+        self.name_policy = name_policy;
+        self
+    }
+
+    /// The active metric-name validation policy.
+    pub fn name_policy(&self) -> NamePolicy {
+        self.name_policy
+    }
+
+    /// The process-global registry, initialized exactly once on first use
+    /// with the default cardinality budget and [`NamePolicy::Legacy`].
+    ///
+    /// Every caller observes the same `'static` registry for the life of
+    /// the process — the telemetry-init pattern: concurrent first calls
+    /// race to initialize, exactly one registry is constructed, and all
+    /// callers block on that single result. Prefer an owned [`Registry`]
+    /// in libraries and tests; the global exists for application wiring
+    /// that cannot thread a handle everywhere.
+    pub fn global() -> &'static Registry {
+        static GLOBAL_REGISTRY: OnceLock<Registry> = OnceLock::new();
+        GLOBAL_REGISTRY.get_or_init(Registry::new)
     }
 
     /// Registers a counter and returns a shared handle for the hot path.
@@ -96,7 +163,7 @@ impl Registry {
         labels: &[(&str, &str)],
     ) -> Result<Counter, MetricsError> {
         let counter = Counter::new();
-        let labels = validated(name, labels)?;
+        let labels = validated(name, labels, self.name_policy)?;
         let mut state = self.lock()?;
         self.check_budget(&state, name)?;
         let family = entry(&mut state, name, help);
@@ -109,6 +176,7 @@ impl Registry {
             name: name.to_string(),
             labels,
             kind: MetricKind::Counter(counter.clone()),
+            created: unix_now(),
         }));
         state.series_count += 1;
         Ok(counter)
@@ -122,7 +190,7 @@ impl Registry {
         labels: &[(&str, &str)],
     ) -> Result<Gauge, MetricsError> {
         let gauge = Gauge::new();
-        let labels = validated(name, labels)?;
+        let labels = validated(name, labels, self.name_policy)?;
         let mut state = self.lock()?;
         self.check_budget(&state, name)?;
         let family = entry(&mut state, name, help);
@@ -135,6 +203,7 @@ impl Registry {
             name: name.to_string(),
             labels,
             kind: MetricKind::Gauge(gauge.clone()),
+            created: unix_now(),
         }));
         state.series_count += 1;
         Ok(gauge)
@@ -152,7 +221,10 @@ impl Registry {
     }
 
     /// Registers a histogram with explicit bucket bounds, which must be
-    /// non-empty and strictly ascending.
+    /// non-empty and strictly ascending. Construct bounds with
+    /// [`exponential_buckets`](crate::exponential_buckets) /
+    /// [`linear_buckets`](crate::linear_buckets) for Prometheus-client
+    /// parity.
     ///
     /// # Errors
     ///
@@ -180,7 +252,7 @@ impl Registry {
             });
         }
         let histogram = Histogram::with_buckets(buckets);
-        let labels = validated(name, labels)?;
+        let labels = validated(name, labels, self.name_policy)?;
         let mut state = self.lock()?;
         self.check_budget(&state, name)?;
         let family = entry(&mut state, name, help);
@@ -193,6 +265,7 @@ impl Registry {
             name: name.to_string(),
             labels,
             kind: MetricKind::Histogram(histogram.clone()),
+            created: unix_now(),
         }));
         state.series_count += 1;
         Ok(histogram)
@@ -203,14 +276,35 @@ impl Registry {
     /// lock is poisoned (see [`MetricsError::RegistryPoisoned`]; a poisoned
     /// registry must not serve metrics).
     pub fn render(&self) -> String {
+        self.render_as(Format::PromText)
+    }
+
+    /// Renders the full registry in `format`. Each metric family renders
+    /// under one `# HELP`/`# TYPE` header pair; OpenMetrics output
+    /// additionally terminates with `# EOF` (requires the `openmetrics`
+    /// feature). Series registered with UTF-8 names under
+    /// [`NamePolicy::Utf8`] render quoted in OpenMetrics and are omitted
+    /// from Prometheus-text output, which cannot represent them. Returns
+    /// an empty string if the registry lock is poisoned.
+    pub fn render_as(&self, format: Format) -> String {
         let Ok(state) = self.inner.read() else {
             return String::new();
         };
         let mut out = String::with_capacity(1024 + state.series_count * 96);
         for family in state.families.values() {
-            for series in &family.series {
-                render_series(&mut out, family.help.as_str(), series);
+            match format {
+                Format::PromText => {
+                    render_family_prom(&mut out, family.help.as_str(), &family.series);
+                }
+                #[cfg(feature = "openmetrics")]
+                Format::OpenMetrics => {
+                    render_family_om(&mut out, family.help.as_str(), &family.series);
+                }
             }
+        }
+        #[cfg(feature = "openmetrics")]
+        if format == Format::OpenMetrics {
+            out.push_str("# EOF\n");
         }
         out
     }
@@ -237,6 +331,14 @@ impl Registry {
     }
 }
 
+/// Seconds since the Unix epoch at registration (the OpenMetrics
+/// `_created` value). Clocks before the epoch degrade to `0.0`.
+fn unix_now() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64())
+}
+
 fn entry<'a>(state: &'a mut RegistryState, name: &str, help: &str) -> &'a mut Family {
     state
         .families
@@ -247,8 +349,26 @@ fn entry<'a>(state: &'a mut RegistryState, name: &str, help: &str) -> &'a mut Fa
         })
 }
 
-fn validated(name: &str, labels: &[(&str, &str)]) -> Result<Vec<(String, String)>, MetricsError> {
-    validate_name(name)?;
+/// Whether `name` is a legacy Prometheus identifier
+/// (`[a-zA-Z_:][a-zA-Z0-9_:]*`). Shared with the exposition renderer,
+/// which quotes non-legacy names in OpenMetrics output.
+pub(crate) fn is_legacy_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == ':')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':')
+}
+
+fn validated(
+    name: &str,
+    labels: &[(&str, &str)],
+    policy: NamePolicy,
+) -> Result<Vec<(String, String)>, MetricsError> {
+    validate_name(name, policy)?;
     let mut out: Vec<(String, String)> = Vec::with_capacity(labels.len());
     for (k, v) in labels {
         let valid = !k.is_empty()
@@ -267,15 +387,15 @@ fn validated(name: &str, labels: &[(&str, &str)]) -> Result<Vec<(String, String)
     Ok(out)
 }
 
-fn validate_name(name: &str) -> Result<(), MetricsError> {
-    let valid = !name.is_empty()
-        && name
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == ':')
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':');
+fn validate_name(name: &str, policy: NamePolicy) -> Result<(), MetricsError> {
+    let valid = match policy {
+        NamePolicy::Legacy => is_legacy_name(name),
+        NamePolicy::Utf8 => {
+            !name.is_empty()
+                && name.len() <= MAX_UTF8_NAME_BYTES
+                && !name.chars().any(char::is_control)
+        }
+    };
     if valid {
         Ok(())
     } else {
@@ -382,5 +502,66 @@ mod tests {
         assert_eq!(r.render(), r.render());
         let text = r.render();
         assert!(text.find("a_total").unwrap() < text.find("b_total").unwrap());
+    }
+
+    #[test]
+    fn family_headers_render_once_per_family() {
+        let r = Registry::new();
+        r.counter("fam_total", "h", &[("m", "GET")]).expect("get");
+        r.counter("fam_total", "h", &[("m", "POST")]).expect("post");
+        let text = r.render();
+        assert_eq!(text.matches("# TYPE fam_total counter").count(), 1);
+        assert_eq!(text.matches("# HELP fam_total h").count(), 1);
+    }
+
+    #[test]
+    fn render_matches_prom_text_encoder() {
+        let r = Registry::new();
+        r.counter("enc_total", "h", &[]).expect("register");
+        assert_eq!(r.render(), r.render_as(Format::PromText));
+    }
+
+    #[test]
+    fn global_registry_initializes_once() {
+        let a = Registry::global();
+        let b = Registry::global();
+        assert!(
+            std::ptr::eq(a, b),
+            "every caller must observe the same process-global registry"
+        );
+        // The global accepts registrations and renders them, and the
+        // registration is visible through the other handle — proving
+        // init-once shared state rather than per-call construction.
+        let registered_before = a.series_count();
+        a.counter("global_probe_total", "Global probe.", &[])
+            .or_else(|_| b.counter("global_probe_total", "Global probe.", &[]))
+            .expect("register on the global");
+        assert_eq!(b.series_count(), registered_before + 1);
+        assert!(a.render().contains("global_probe_total"));
+    }
+
+    #[test]
+    fn utf8_policy_accepts_dotted_names() {
+        let r = Registry::new().with_name_policy(NamePolicy::Utf8);
+        assert_eq!(r.name_policy(), NamePolicy::Utf8);
+        assert!(r.counter("service.http.requests", "h", &[]).is_ok());
+        assert!(r.counter("", "empty", &[]).is_err());
+        assert!(r.counter("bad\nname", "control char", &[]).is_err());
+        let long = "x".repeat(256);
+        assert!(r.counter(&long, "too long", &[]).is_err());
+        assert!(r.counter(&"x".repeat(255), "at cap", &[]).is_ok());
+    }
+
+    #[test]
+    fn utf8_names_rejected_under_legacy_policy() {
+        let r = Registry::new();
+        assert_eq!(r.name_policy(), NamePolicy::Legacy);
+        assert!(r.counter("service.http.requests", "h", &[]).is_err());
+    }
+
+    #[test]
+    fn labels_stay_legacy_validated_under_utf8_policy() {
+        let r = Registry::new().with_name_policy(NamePolicy::Utf8);
+        assert!(r.counter("ok.name", "h", &[("dotted.label", "v")]).is_err());
     }
 }

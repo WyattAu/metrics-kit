@@ -11,7 +11,7 @@ pub struct CachePadded<T>(pub T);
 
 impl<T> CachePadded<T> {
     /// Creates a new padded cell.
-    pub fn new(value: T) -> Self {
+    pub const fn new(value: T) -> Self {
         Self(value)
     }
 }

@@ -1,18 +1,27 @@
 [package]
 name = "metrics-kit"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.85"
-description = "Lock-free Prometheus-exposition metrics kit — counters, gauges, histograms with cache-line padding, cardinality guards, and VictoriaMetrics/Grafana-compatible text output"
+description = "Lock-free Prometheus/OpenMetrics-exposition metrics kit — counters, gauges, histograms with cache-line padding, cardinality guards, exemplars, and VictoriaMetrics/Grafana-compatible text output"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/WyattAu/metrics-kit"
-keywords = ["metrics", "prometheus", "observability", "victoriametrics", "monitoring"]
+keywords = ["metrics", "prometheus", "openmetrics", "observability", "exemplars"]
 categories = ["development-tools::profiling"]
 exclude = [".github/", "benches/"]
 
 [features]
 default = []
 axum = ["dep:axum"]
+# openmetrics — OpenMetrics text format 1.0.0 rendering (`render_as(Format::OpenMetrics)`):
+# `# EOF` terminator, `_created` series, quoted UTF-8 metric names, and the
+# `application/openmetrics-text; version=1.0.0` content type so scrapers can
+# negotiate formats via `Accept`.
+openmetrics = []
+# exemplars — lock-free, allocation-free last-writer-wins exemplar slot on
+# `Counter` (`Counter::with_exemplar`), rendered in OpenMetrics mode as
+# `# {trace_id="..."} 1.0` after the sample.
+exemplars = []
 
 [dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"], optional = true }

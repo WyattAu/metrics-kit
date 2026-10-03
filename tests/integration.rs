@@ -90,3 +90,32 @@ fn exposition_is_parseable_line_by_line() {
     assert!(text.contains("# HELP c_total Has \"quotes\" and \\\\ backslash."));
     assert!(text.contains(r#"c_total{k="v\nx"} 0"#));
 }
+
+#[test]
+fn bucket_constructors_feed_registry_histograms() {
+    let registry = Registry::new();
+
+    let exp = metrics_kit::exponential_buckets(0.001, 10.0, 3).expect("exp bounds");
+    assert_eq!(exp, vec![0.001, 0.01, 0.1]);
+    let latency = registry
+        .histogram_with_buckets("ctor_exp_latency", "h", &[], exp)
+        .expect("register");
+    latency.observe(0.005);
+
+    let lin = metrics_kit::linear_buckets(0.0, 100.0, 4).expect("lin bounds");
+    assert_eq!(lin, vec![0.0, 100.0, 200.0, 300.0]);
+    let sizes = registry
+        .histogram_with_buckets("ctor_lin_sizes", "h", &[], lin)
+        .expect("register");
+    sizes.observe(150.0);
+
+    let text = registry.render();
+    assert!(
+        text.contains(r#"ctor_exp_latency_bucket{le="0.01"} 1"#),
+        "{text}"
+    );
+    assert!(
+        text.contains(r#"ctor_lin_sizes_bucket{le="200"} 1"#),
+        "{text}"
+    );
+}

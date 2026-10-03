@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use libfuzzer_sys::fuzz_target;
-use metrics_kit::Registry;
+use metrics_kit::{Encoder, Format, NamePolicy, Registry};
 
 /// Split `data` into up to `n` length-prefixed records (u16 LE length +
 /// payload). Missing records come back empty; trailing bytes are ignored.
@@ -72,6 +72,31 @@ fuzz_target!(|data: &[u8]| {
         }));
     }
     let rendered = registry.render();
+
+    // Exemplars: adversarial trace keys/values (quotes, backslashes,
+    // over-long strings) must truncate/escape, never panic or corrupt the
+    // OpenMetrics exemplar suffix.
+    if let Ok(counter) = registry.counter(&format!("{name}_ex_total"), "exemplar fuzz", &[]) {
+        counter.with_exemplar(&[], 1, label_k.as_ref(), label_v.as_ref());
+        counter.with_exemplar(
+            &[(label_k2.as_ref(), label_v2.as_ref())],
+            2,
+            label_v.as_ref(),
+            label_k.as_ref(),
+        );
+    }
+
+    // OpenMetrics render: UTF-8 names must quote, created series and the
+    // `# EOF` terminator must always terminate the document.
+    let _ = Encoder::new(Format::OpenMetrics).encode_to_string(&registry);
+
+    // A UTF-8-policy registry accepts arbitrary names; the OpenMetrics
+    // renderer must quote them losslessly (the legacy render omits them).
+    let om_registry = Registry::new().with_name_policy(NamePolicy::Utf8);
+    let _ = om_registry.counter(&name, &help, &labels);
+    let _ = om_registry.gauge(&name, &help, &labels);
+    let _ = om_registry.render_as(Format::OpenMetrics);
+
     for h in handles {
         let _ = h.join();
     }
