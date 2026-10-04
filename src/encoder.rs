@@ -15,6 +15,15 @@ use crate::registry::Registry;
 /// the same registry; series registered with
 /// [`NamePolicy::Utf8`](crate::NamePolicy::Utf8) names only appear in
 /// `OpenMetrics` renders (the legacy text format cannot represent them).
+///
+/// # Matching
+///
+/// `#[non_exhaustive]` because `OpenMetrics` exists only under the
+/// `openmetrics` feature. Cargo unifies features graph-wide, so a host that
+/// enables `openmetrics` *anywhere* in its graph would otherwise find an
+/// exhaustive `match` broken by a format it never requested. With
+/// `#[non_exhaustive]` that is one compile error naming the missing arm,
+/// instead of a break discovered in someone else's build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum Format {

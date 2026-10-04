@@ -3,6 +3,25 @@
 All notable changes to this project are documented here. Format: [Keep a
 Changelog](https://keepachangelog.com/) — versions follow [semver](https://semver.org).
 
+## [Unreleased]
+
+### Changed (breaking — 0.x minor bump)
+
+- **`Format` is now `#[non_exhaustive]`.** `Format::OpenMetrics` exists
+  only under the `openmetrics` feature, and Cargo unifies features
+  graph-wide: a host whose dependency graph enabled `openmetrics`
+  *anywhere* — including via a crate that has nothing to do with
+  metrics — would find its exhaustive `match` broken by a variant it
+  never asked for. `#[non_exhaustive]` turns that into one compile
+  error at the point of use, with the compiler naming the missing arm.
+
+  Migration: add a `_ => Format::PromText` arm to any exhaustive match
+  on `Format`. Inside this crate, nothing changed — internal matches
+  still see every variant.
+
+  Found by the estate-wide `feature-compat` gate
+  (`engineering-standards/scripts/check-features.py`, rule R1).
+
 ## [0.2.0] - 2026-10-03
 
 ### Added
