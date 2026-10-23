@@ -1,4 +1,5 @@
 # metrics-kit
+[![Estate integration](https://github.com/WyattAu/estate-integration/actions/workflows/ci.yml/badge.svg)](https://github.com/WyattAu/estate-integration/actions/workflows/ci.yml)
 
 Lock-free Prometheus/OpenMetrics-exposition metrics kit for Rust: the
 shared hot-path metrics pattern of the WyattAu estate, suitable for
