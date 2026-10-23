@@ -1,4 +1,4 @@
-# Security Policy — metrics-kit
+# Security Policy: metrics-kit
 
 ## Supported versions
 
@@ -23,12 +23,12 @@ considerations for integrators:
 
 - **Label values are escaped** (`\`, `"`, `\n`) before exposition, but
   label values containing request-controlled data (paths, hosts, emails)
-  should still be avoided — they are a cardinality and data-leak vector,
+  should still be avoided: they are a cardinality and data-leak vector,
   and the registry's series budget exists to bound the blast radius.
 - The `axum` metrics route is **unauthenticated by design**; bind it on an
   internal interface or wrap it with your auth middleware.
 - No allocations from request-controlled strings occur on the hot path.
-- `#![forbid(unsafe_code)]` — no unsafe blocks exist in this crate.
+- `#![forbid(unsafe_code)]`: no unsafe blocks exist in this crate.
 
 [GitHub security advisories]:
     https://github.com/WyattAu/metrics-kit/security/advisories/new

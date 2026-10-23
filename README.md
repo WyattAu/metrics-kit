@@ -1,6 +1,6 @@
 # metrics-kit
 
-Lock-free Prometheus/OpenMetrics-exposition metrics kit for Rust — the
+Lock-free Prometheus/OpenMetrics-exposition metrics kit for Rust: the
 shared hot-path metrics pattern of the WyattAu estate, suitable for
 VictoriaMetrics, Grafana Agent, vmagent, and any Prometheus-compatible
 scraper.
@@ -75,7 +75,7 @@ unauthenticated by design.
 ## OpenMetrics and format negotiation
 
 With the `openmetrics` feature, the same registry renders OpenMetrics
-text 1.0.0 — `# EOF`-terminated, with `_created` series for counters and
+text 1.0.0: `# EOF`-terminated, with `_created` series for counters and
 histograms (gauges are excluded per the spec) and counter family headers
 under the `_total`-stripped name:
 
@@ -90,7 +90,7 @@ let (body, content_type) =
 
 The `axum` route negotiates automatically: a scrape sending
 `Accept: application/openmetrics-text` gets OpenMetrics, everything else
-gets 0.0.4 text — each with the correct `Content-Type`.
+gets 0.0.4 text: each with the correct `Content-Type`.
 
 UTF-8 metric names (e.g. `service.http.requests`) are opt-in per
 registry and render in the spec's quoted form:
@@ -109,7 +109,7 @@ represent them).
 ## Exemplars
 
 With the `exemplars` feature, a counter carries a fixed-capacity
-exemplar slot — a cache-line-padded, lock-free seqlock cell (the estate's
+exemplar slot: a cache-line-padded, lock-free seqlock cell (the estate's
 percentile-ring pattern). Recording is allocation-free; the newest
 exemplar wins:
 
@@ -179,7 +179,7 @@ README per the estate standard.
 |---|---|---|
 | `axum` | no | `metrics_route(Arc<Registry>)` → `Router` with `GET /metrics` (Accept negotiation with `openmetrics`) |
 | `openmetrics` | no | OpenMetrics 1.0.0 rendering: `Format::OpenMetrics`, `render_as`, `_created`, quoted UTF-8 names, `# EOF` |
-| `exemplars` | no | `Counter::with_exemplar` / `clear_exemplar` — lock-free last-writer-wins exemplar slot |
+| `exemplars` | no | `Counter::with_exemplar` / `clear_exemplar`: lock-free last-writer-wins exemplar slot |
 
 ## License
 
