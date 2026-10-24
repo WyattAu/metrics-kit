@@ -182,6 +182,13 @@ README per the estate standard.
 | `openmetrics` | no | OpenMetrics 1.0.0 rendering: `Format::OpenMetrics`, `render_as`, `_created`, quoted UTF-8 names, `# EOF` |
 | `exemplars` | no | `Counter::with_exemplar` / `clear_exemplar`: lock-free last-writer-wins exemplar slot |
 
+## Stability
+
+`metrics-kit` is 1.0. Breaking changes require a minor bump and a `#[deprecated]`
+window of at least one minor release; MSRV bumps are minor releases, never
+patch releases. See the changelog for the short list of explicitly
+non-contractual behaviours.
+
 ## License
 
 Licensed under either of [Apache-2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT)

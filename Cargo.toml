@@ -1,6 +1,6 @@
 [package]
 name = "metrics-kit"
-version = "0.2.1"
+version = "1.0.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Lock-free Prometheus-exposition metrics kit: counters, gauges, histograms with cache-line padding, cardinality guards, VictoriaMetrics/Grafana-compatible output"

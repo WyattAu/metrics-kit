@@ -3,6 +3,24 @@
 All notable changes to this project are documented here. Format: [Keep a
 Changelog](https://keepachangelog.com/): versions follow [semver](https://semver.org).
 
+## [1.0.0] - 2026-10-24
+
+### Declared stable
+
+First 1.0. `metrics-kit` feeds production dashboards; this release commits the counter, gauge, and histogram surfaces, the exposition format, and the cardinality guards as API-stable.
+
+### Guarantees from here on
+
+- Breaking changes to public items require a minor bump plus a `#[deprecated]`
+  window of at least one minor release.
+- MSRV bumps are minor releases, not patch releases.
+- `#![deny(missing_docs)]` and `#![forbid(unsafe_code)]` are enforced.
+
+### Explicitly not guaranteed
+
+- New metric kinds may arrive in minors behind features.
+- Exposition label ordering is not contractual; scrapers must not depend on it.
+
 ## [0.2.0] - 2026-10-03
 
 ### Added
