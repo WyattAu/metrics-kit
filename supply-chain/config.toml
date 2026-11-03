@@ -256,17 +256,9 @@ criteria = "safe-to-run"
 version = "3.0.5"
 criteria = "safe-to-deploy"
 
-[[exemptions.sync_wrapper]]
-version = "1.0.2"
-criteria = "safe-to-deploy"
-
 [[exemptions.tinytemplate]]
 version = "1.2.1"
 criteria = "safe-to-run"
-
-[[exemptions.tokio]]
-version = "1.53.1"
-criteria = "safe-to-deploy"
 
 [[exemptions.tokio]]
 version = "1.54.1"
